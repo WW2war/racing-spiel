@@ -134,6 +134,12 @@
         .btn-row { display: flex; gap: 15px; }
         .difficulty-btn { opacity: 0.5; transition: opacity 0.2s, transform 0.1s; }
         .difficulty-btn.selected { opacity: 1; transform: scale(1.1); border: 2px solid white; }
+        .color-btn {
+            width: 50px; height: 50px; border-radius: 50%; border: 3px solid rgba(255,255,255,0.3);
+            cursor: pointer; pointer-events: all; transition: transform 0.15s, border-color 0.2s;
+        }
+        .color-btn:hover { transform: scale(1.1); }
+        .color-btn.selected { border-color: white; transform: scale(1.15); box-shadow: 0 0 15px rgba(255,255,255,0.5); }
         #boost-indicator {
             position: absolute; top: 110px; left: 40px; font-size: 22px; font-weight: bold;
             color: #00ffff; text-shadow: 0 0 15px rgba(0,255,255,0.8); display: none;
@@ -207,6 +213,19 @@
             <button class="btn btn-small difficulty-btn selected" data-difficulty="easy" style="background: #44cc44;">LEICHT</button>
             <button class="btn btn-small difficulty-btn" data-difficulty="medium" style="background: #ffaa00;">MITTEL</button>
             <button class="btn btn-small difficulty-btn" data-difficulty="hard" style="background: #ff4444;">SCHWER</button>
+        </div>
+    </div>
+    <div style="margin-bottom: 20px; pointer-events: all;">
+        <p style="font-size: 20px; margin-bottom: 10px;">Autofarbe:</p>
+        <div style="display: flex; gap: 12px; justify-content: center;">
+            <div class="color-btn selected" data-color="0xff2200" style="background: #ff2200;"></div>
+            <div class="color-btn" data-color="0x0088ff" style="background: #0088ff;"></div>
+            <div class="color-btn" data-color="0x00cc44" style="background: #00cc44;"></div>
+            <div class="color-btn" data-color="0xffcc00" style="background: #ffcc00;"></div>
+            <div class="color-btn" data-color="0xff00ff" style="background: #ff00ff;"></div>
+            <div class="color-btn" data-color="0xffffff" style="background: #ffffff;"></div>
+            <div class="color-btn" data-color="0x111111" style="background: #111111;"></div>
+            <div class="color-btn" data-color="0xff6600" style="background: #ff6600;"></div>
         </div>
     </div>
     <button class="btn" id="start-btn">START</button>
@@ -446,6 +465,7 @@ const NUM_OPPONENTS = 4;
 
 let selectedTrack = 'speedway';
 let selectedDifficulty = 'easy';
+let selectedColor = 0xff2200;
 let currentTrackData = null;
 let trackGroup = null;
 let sceneryGroup = null;
@@ -1041,7 +1061,7 @@ function createCar(color, isPlayer = false) {
     return car;
 }
 
-const playerCar = createCar(0xff2200, true);
+let playerCar = createCar(selectedColor, true);
 scene.add(playerCar);
 
 const player = {
@@ -1217,6 +1237,15 @@ document.querySelectorAll('.difficulty-btn').forEach(btn => {
     });
 });
 
+// Car color selection
+document.querySelectorAll('.color-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.color-btn').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        selectedColor = parseInt(btn.dataset.color);
+    });
+});
+
 document.getElementById('start-btn').addEventListener('click', () => {
     initRace(selectedTrack);
     startCountdown();
@@ -1236,6 +1265,11 @@ document.getElementById('back-btn').addEventListener('click', () => {
 });
 
 function initRace(trackKey) {
+    // Rebuild player car with selected color
+    scene.remove(playerCar);
+    playerCar = createCar(selectedColor, true);
+    scene.add(playerCar);
+
     currentTrackData = buildTrack(trackKey);
     spawnObstacles(currentTrackData.trackPoints);
     setupOpponents();
