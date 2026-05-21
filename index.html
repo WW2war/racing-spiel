@@ -132,6 +132,15 @@
         #finish-time { font-size: 36px; color: #fff; margin-bottom: 10px; }
         #finish-position { font-size: 28px; color: #ffcc00; margin-bottom: 25px; }
         .btn-row { display: flex; gap: 15px; }
+        .difficulty-btn { opacity: 0.5; transition: opacity 0.2s, transform 0.1s; }
+        .difficulty-btn.selected { opacity: 1; transform: scale(1.1); border: 2px solid white; }
+        #boost-indicator {
+            position: absolute; top: 110px; left: 40px; font-size: 22px; font-weight: bold;
+            color: #00ffff; text-shadow: 0 0 15px rgba(0,255,255,0.8); display: none;
+        }
+        @media (max-width: 768px) {
+            #boost-indicator { top: 75px; left: 15px; font-size: 16px; }
+        }
     </style>
 </head>
 <body>
@@ -145,6 +154,7 @@
         <div id="speed-number">0</div>
         <div id="speed-unit">km/h</div>
     </div>
+    <div id="boost-indicator">BOOST!</div>
     <div id="message"></div>
     <canvas id="minimap"></canvas>
 </div>
@@ -189,6 +199,14 @@
             <h3>Nordschleife</h3>
             <div class="track-desc">20km Legende - die Gruene Hoelle!</div>
             <div class="track-difficulty">Schwierigkeit: Legende</div>
+        </div>
+    </div>
+    <div style="margin-bottom: 20px; pointer-events: all;">
+        <p style="font-size: 20px; margin-bottom: 10px;">Schwierigkeit:</p>
+        <div style="display: flex; gap: 10px; justify-content: center;">
+            <button class="btn btn-small difficulty-btn selected" data-difficulty="easy" style="background: #44cc44;">LEICHT</button>
+            <button class="btn btn-small difficulty-btn" data-difficulty="medium" style="background: #ffaa00;">MITTEL</button>
+            <button class="btn btn-small difficulty-btn" data-difficulty="hard" style="background: #ff4444;">SCHWER</button>
         </div>
     </div>
     <button class="btn" id="start-btn">START</button>
@@ -419,20 +437,33 @@ Object.keys(TRACKS).forEach(k => drawTrackPreview('preview-' + k, k));
 
 // ==================== GAME CONFIG ====================
 const TRACK_WIDTH = 22;
-const MAX_SPEED = 1.8;
-const ACCELERATION = 0.02;
-const BRAKE_FORCE = 0.035;
-const FRICTION = 0.006;
+const MAX_SPEED = 1.2;
+const ACCELERATION = 0.015;
+const BRAKE_FORCE = 0.028;
+const FRICTION = 0.005;
 const TURN_SPEED = 0.03;
 const NUM_OPPONENTS = 4;
 
 let selectedTrack = 'speedway';
+let selectedDifficulty = 'easy';
 let currentTrackData = null;
 let trackGroup = null;
 let sceneryGroup = null;
 
-// Collision objects (trees, buildings, mountains)
+// Collision objects (buildings, mountains - no trees)
 let collisionObjects = [];
+
+// Obstacles
+let oilSlicks = [];
+let crossingCars = [];
+let boostPads = [];
+let obstacleGroup = null;
+
+// Boost state
+let boostActive = false;
+let boostTimer = 0;
+const BOOST_DURATION = 3;
+const BOOST_MULTIPLIER = 1.8;
 
 // ==================== SETUP ====================
 const scene = new THREE.Scene();
@@ -586,25 +617,6 @@ function addScenery(trackKey, trackPoints, group) {
         return false;
     }
 
-    // Trees
-    const numTrees = trackKey === 'city' ? 30 : 80;
-    for (let i = 0; i < numTrees; i++) {
-        const angle = Math.random() * Math.PI * 2;
-        const dist = 30 + Math.random() * 120;
-        const x = Math.cos(angle) * dist, z = Math.sin(angle) * dist;
-        if (!isTooClose(x, z)) {
-            group.add(createTree(x, z));
-            collisionObjects.push({ x, z, radius: 1.5 });
-        }
-    }
-    // Far trees
-    for (let i = 0; i < 60; i++) {
-        const angle = Math.random() * Math.PI * 2;
-        const dist = 220 + Math.random() * 100;
-        const x = Math.cos(angle) * dist, z = Math.sin(angle) * dist;
-        group.add(createTree(x, z));
-        collisionObjects.push({ x, z, radius: 1.5 });
-    }
     // Buildings (more for city track)
     const numBuildings = trackKey === 'city' ? 40 : 20;
     for (let i = 0; i < numBuildings; i++) {
@@ -628,6 +640,136 @@ function addScenery(trackKey, trackPoints, group) {
             }
         }
     }
+}
+
+// ==================== OBSTACLES ====================
+function createOilSlick(x, z) {
+    const group = new THREE.Group();
+    const slick = new THREE.Mesh(
+        new THREE.CircleGeometry(2.5, 16),
+        new THREE.MeshLambertMaterial({ color: 0x1a1a2e, transparent: true, opacity: 0.7 })
+    );
+    slick.rotation.x = -Math.PI / 2;
+    slick.position.set(x, 0.15, z);
+    group.add(slick);
+    const sheen = new THREE.Mesh(
+        new THREE.CircleGeometry(2, 12),
+        new THREE.MeshPhongMaterial({ color: 0x334488, transparent: true, opacity: 0.4, shininess: 100 })
+    );
+    sheen.rotation.x = -Math.PI / 2;
+    sheen.position.set(x, 0.16, z);
+    group.add(sheen);
+    return group;
+}
+
+function createBoostPad(x, z, angle) {
+    const group = new THREE.Group();
+    const pad = new THREE.Mesh(
+        new THREE.BoxGeometry(3, 0.1, 5),
+        new THREE.MeshPhongMaterial({ color: 0x00ccff, emissive: 0x0066aa, transparent: true, opacity: 0.8 })
+    );
+    pad.rotation.y = angle;
+    pad.position.set(x, 0.12, z);
+    group.add(pad);
+    for (let i = -1; i <= 1; i++) {
+        const arrow = new THREE.Mesh(
+            new THREE.ConeGeometry(0.4, 1.2, 4),
+            new THREE.MeshBasicMaterial({ color: 0x00ffff })
+        );
+        arrow.rotation.x = -Math.PI / 2;
+        arrow.rotation.z = -angle;
+        arrow.position.set(x + Math.sin(angle) * (i * 1.2), 0.3, z + Math.cos(angle) * (i * 1.2));
+        group.add(arrow);
+    }
+    return group;
+}
+
+function createCrossingCar(color) {
+    const car = new THREE.Group();
+    const body = new THREE.Mesh(
+        new THREE.BoxGeometry(2, 1.2, 4),
+        new THREE.MeshPhongMaterial({ color, shininess: 60 })
+    );
+    body.position.y = 0.8; body.castShadow = true;
+    car.add(body);
+    const cabin = new THREE.Mesh(
+        new THREE.BoxGeometry(1.8, 0.8, 2),
+        new THREE.MeshPhongMaterial({ color, shininess: 60 })
+    );
+    cabin.position.y = 1.6;
+    car.add(cabin);
+    const ws = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.6, 0.7),
+        new THREE.MeshPhongMaterial({ color: 0x88aacc, transparent: true, opacity: 0.5 })
+    );
+    ws.position.set(0, 1.6, 1.01);
+    car.add(ws);
+    return car;
+}
+
+function spawnObstacles(trackPoints) {
+    if (obstacleGroup) { scene.remove(obstacleGroup); }
+    obstacleGroup = new THREE.Group();
+    oilSlicks = [];
+    crossingCars = [];
+    boostPads = [];
+
+    const pts = trackPoints;
+    const ptsLen = pts.length - 1;
+
+    // Boost pads (all difficulties)
+    for (let i = 0; i < 4; i++) {
+        const idx = Math.floor((i + 0.5) * ptsLen / 4) % ptsLen;
+        const p = pts[idx];
+        const np = pts[(idx + 1) % ptsLen];
+        const angle = Math.atan2(np.x - p.x, np.z - p.z);
+        obstacleGroup.add(createBoostPad(p.x, p.z, angle));
+        boostPads.push({ x: p.x, z: p.z, radius: 2.5 });
+    }
+
+    // Oil slicks (easy + hard)
+    if (selectedDifficulty === 'easy' || selectedDifficulty === 'hard') {
+        const oilCount = selectedDifficulty === 'hard' ? 10 : 8;
+        for (let i = 0; i < oilCount; i++) {
+            const idx = Math.floor(Math.random() * ptsLen);
+            const p = pts[idx];
+            const np = pts[(idx + 1) % ptsLen];
+            const dx = np.x - p.x, dz = np.z - p.z;
+            const len = Math.sqrt(dx * dx + dz * dz) || 1;
+            const offset = (Math.random() - 0.5) * TRACK_WIDTH * 0.5;
+            const ox = p.x + (-dz / len) * offset;
+            const oz = p.z + (dx / len) * offset;
+            obstacleGroup.add(createOilSlick(ox, oz));
+            oilSlicks.push({ x: ox, z: oz, radius: 2.5 });
+        }
+    }
+
+    // Crossing cars (medium + hard)
+    if (selectedDifficulty === 'medium' || selectedDifficulty === 'hard') {
+        const carCount = selectedDifficulty === 'hard' ? 5 : 4;
+        const carColors = [0xffcc00, 0xff6600, 0x00aa00, 0x0066ff, 0xcc00cc];
+        for (let i = 0; i < carCount; i++) {
+            const idx = Math.floor((i + 0.3) * ptsLen / carCount) % ptsLen;
+            const p = pts[idx];
+            const np = pts[(idx + 1) % ptsLen];
+            const dx = np.x - p.x, dz = np.z - p.z;
+            const len = Math.sqrt(dx * dx + dz * dz) || 1;
+            const perpX = -dz / len;
+            const perpZ = dx / len;
+            const mesh = createCrossingCar(carColors[i % carColors.length]);
+            mesh.position.set(p.x, 0, p.z);
+            obstacleGroup.add(mesh);
+            crossingCars.push({
+                mesh, centerX: p.x, centerZ: p.z,
+                perpX, perpZ, range: TRACK_WIDTH * 0.8,
+                speed: 0.02 + Math.random() * 0.015,
+                phase: Math.random() * Math.PI * 2,
+                crossAngle: Math.atan2(perpX, perpZ)
+            });
+        }
+    }
+
+    scene.add(obstacleGroup);
 }
 
 function createTree(x, z) {
@@ -924,7 +1066,7 @@ function setupOpponents() {
         opponents.push({
             mesh: car,
             trackIndex: startOffset,
-            speed: 0.3 + Math.random() * 0.15,
+            speed: 0.2 + Math.random() * 0.1,
             offset: (Math.random() - 0.5) * 6,
             lapProgress: 0
         });
@@ -1066,6 +1208,15 @@ document.querySelectorAll('.track-card').forEach(card => {
     });
 });
 
+// Difficulty selection
+document.querySelectorAll('.difficulty-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.difficulty-btn').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        selectedDifficulty = btn.dataset.difficulty;
+    });
+});
+
 document.getElementById('start-btn').addEventListener('click', () => {
     initRace(selectedTrack);
     startCountdown();
@@ -1086,6 +1237,7 @@ document.getElementById('back-btn').addEventListener('click', () => {
 
 function initRace(trackKey) {
     currentTrackData = buildTrack(trackKey);
+    spawnObstacles(currentTrackData.trackPoints);
     setupOpponents();
     resetGame();
     document.getElementById('track-name-display').textContent = TRACKS[trackKey].name;
@@ -1117,6 +1269,9 @@ function resetGame() {
     raceTime = 0;
     gameStarted = false;
     gameFinished = false;
+    boostActive = false;
+    boostTimer = 0;
+    document.getElementById('boost-indicator').style.display = 'none';
     const totalLaps = TRACKS[selectedTrack].laps;
     document.getElementById('lap-display').textContent = `Runde 1 / ${totalLaps}`;
     document.getElementById('time-display').textContent = '0:00.0';
@@ -1190,8 +1345,22 @@ function update() {
     const left = keys['a'] || keys['arrowleft'] || false;
     const right = keys['d'] || keys['arrowright'] || false;
 
+    // Boost timer
+    if (boostActive) {
+        boostTimer -= delta;
+        if (boostTimer <= 0) {
+            boostActive = false;
+            boostTimer = 0;
+            document.getElementById('boost-indicator').style.display = 'none';
+        } else {
+            document.getElementById('boost-indicator').textContent = `BOOST! ${boostTimer.toFixed(1)}s`;
+        }
+    }
+
     // Speed
-    if (forward) player.speed = Math.min(player.speed + ACCELERATION, MAX_SPEED);
+    const currentMaxSpeed = boostActive ? MAX_SPEED * BOOST_MULTIPLIER : MAX_SPEED;
+    const currentAccel = boostActive ? ACCELERATION * 1.5 : ACCELERATION;
+    if (forward) player.speed = Math.min(player.speed + currentAccel, currentMaxSpeed);
     else if (backward) player.speed = Math.max(player.speed - BRAKE_FORCE, -MAX_SPEED * 0.3);
     else {
         if (player.speed > 0) player.speed = Math.max(0, player.speed - FRICTION);
@@ -1226,7 +1395,7 @@ function update() {
         }
     });
 
-    // Collision with scenery (trees, buildings, mountains)
+    // Collision with scenery (buildings, mountains)
     for (const obj of collisionObjects) {
         const dx = player.position.x - obj.x;
         const dz = player.position.z - obj.z;
@@ -1241,6 +1410,48 @@ function update() {
             player.speed *= -0.15;
         }
     }
+
+    // Oil slick collision - spin out
+    for (const oil of oilSlicks) {
+        const dx = player.position.x - oil.x;
+        const dz = player.position.z - oil.z;
+        if (dx * dx + dz * dz < oil.radius * oil.radius && Math.abs(player.speed) > 0.3) {
+            player.angle += (Math.random() - 0.5) * 1.5;
+            player.speed *= 0.4;
+        }
+    }
+
+    // Boost pad collision
+    for (const bp of boostPads) {
+        const dx = player.position.x - bp.x;
+        const dz = player.position.z - bp.z;
+        if (dx * dx + dz * dz < bp.radius * bp.radius && !boostActive) {
+            boostActive = true;
+            boostTimer = BOOST_DURATION;
+            document.getElementById('boost-indicator').style.display = 'block';
+        }
+    }
+
+    // Crossing car collision
+    for (const cc of crossingCars) {
+        const dx = player.position.x - cc.mesh.position.x;
+        const dz = player.position.z - cc.mesh.position.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist < 3.5) {
+            player.position.x += (dx / dist) * 0.8;
+            player.position.z += (dz / dist) * 0.8;
+            player.speed *= -0.3;
+        }
+    }
+
+    // Update crossing cars movement
+    crossingCars.forEach(cc => {
+        cc.phase += cc.speed;
+        const offset = Math.sin(cc.phase) * cc.range;
+        cc.mesh.position.x = cc.centerX + cc.perpX * offset;
+        cc.mesh.position.z = cc.centerZ + cc.perpZ * offset;
+        cc.mesh.rotation.y = cc.crossAngle + (Math.cos(cc.phase) > 0 ? 0 : Math.PI);
+    });
 
     // Update car mesh
     playerCar.position.copy(player.position);
