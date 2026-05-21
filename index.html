@@ -1271,6 +1271,8 @@ function resetGame() {
     gameFinished = false;
     boostActive = false;
     boostTimer = 0;
+    player.spinning = false;
+    player.spinRemaining = 0;
     document.getElementById('boost-indicator').style.display = 'none';
     const totalLaps = TRACKS[selectedTrack].laps;
     document.getElementById('lap-display').textContent = `Runde 1 / ${totalLaps}`;
@@ -1411,13 +1413,27 @@ function update() {
         }
     }
 
-    // Oil slick collision - spin out
+    // Oil slick collision - full 360 spin
     for (const oil of oilSlicks) {
         const dx = player.position.x - oil.x;
         const dz = player.position.z - oil.z;
-        if (dx * dx + dz * dz < oil.radius * oil.radius && Math.abs(player.speed) > 0.3) {
-            player.angle += (Math.random() - 0.5) * 1.5;
-            player.speed *= 0.4;
+        if (dx * dx + dz * dz < oil.radius * oil.radius && Math.abs(player.speed) > 0.3 && !player.spinning) {
+            player.spinning = true;
+            player.spinRemaining = Math.PI * 2;
+            player.spinDirection = Math.random() > 0.5 ? 1 : -1;
+            player.spinSpeed = 0.15;
+            player.speedBeforeSpin = player.speed;
+            player.speed *= 0.3;
+        }
+    }
+
+    // Handle spinning animation
+    if (player.spinning) {
+        const spinAmount = player.spinSpeed;
+        player.angle += spinAmount * player.spinDirection;
+        player.spinRemaining -= spinAmount;
+        if (player.spinRemaining <= 0) {
+            player.spinning = false;
         }
     }
 
